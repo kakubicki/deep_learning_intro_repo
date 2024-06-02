@@ -18,6 +18,13 @@ class NeuralNetwork(object):
         self.shuffle = shuffle
         self.minibatches = minibatches
 
+    def _encode_labels(self, y, k):
+        onehot = np.zeros((k, y.shape[0]))
+        for idx, val in enumerate(y):
+            onehot[val, idx] = 1.0
+
+        return onehot
+
     def _initialize_weights(self):
         w1 = np.random.uniform(-1.0, 1.0, size=self.n_hidden*(self.n_features + 1))
         w1 = w1.reshape(self.n_hidden, self.n_features + 1)
@@ -78,8 +85,82 @@ class NeuralNetwork(object):
         sigma3 = a3 - y_enc
         z2 = self._add_bias_unit(z2, how='row')
         sigma2 = w2.T.dot(sigma3) * self._sigmoid_gradient(z2)
+        sigma2 = sigma2[1:, :]
+        grad1 = sigma2.dot(a1)
+        grad2 = sigma3.dot(a2.T)
 
-    
+        #regularize
+        grad1[:, 1:] += (w1[:, 1:] * (self.l1 + self.l2))
+        grad2[:, 1:] += (w2[:, 1:] * (self.l1 + self.l2))
+
+        return grad1, grad2
+
+    def predict(self, X):
+        a1, z2, a2, z3, a3 = self._feedforward(X, self.w1, self.w2)
+        y_pred = np.argmax(z3, axis=0)
+
+        return y_pred
+
+    def fit(self, X, y, print_progress=False):
+        self.cost_ = []
+        X_data, y_data = X.copy(), y.copy()
+        y_enc = self._encode_labels(y, self.n_output)
+
+        delta_w1_prev = np.zeros(self.w1.shape)        
+        delta_w2_prev = np.zeros(self.w2.shape)
+
+        for i in range(self.epochs):
+
+            # adaptive learning rate 
+            self.eta /= (1 + self.decrease_const*i)
+
+            if print_progress:
+                sys.stderr.write('\rEpoch: %d/%d' % (i+1, self.epochs))
+                sys.stderr.flush()
+
+            if self.shuffle:
+                idx = np.random.permutation(y_data.shape[0])
+                X_data, y_enc = X_data[idx], y_enc[:, idx]
+
+            mini = np.array_split(range(y_data.shape[0]), self.minibatches)
+            for idx in mini:
+                # feedforward
+                a1, z2, a2, z3, a3 = self._feedforward(X_data[idx], self.w1, self.w2)
+                cost = self._get_cost(y_enc=y_enc[:, idx], output = a3, w1 = self.w1, w2 = self.w2)
+                self.cost_.append(cost)
+
+                # compute gradient via backpropagation
+                grad1, grad2 = self._get_gradient(a1 = a1, a2 = a2, a3 = a3, z2 = z2, y_enc = y_enc[:, idx], w1 = self.w1, w2 = self.w2)
+
+                # update weights
+                delta_w1, delta_w2 = self.eta * grad1, self.eta * grad2
+                self.w1 -= (delta_w1 + (self.alpha * delta_w1_prev))
+                self.w2 -= (delta_w2 + (self.alpha * delta_w2_prev))
+                delta_w1_prev, delta_w2_prev = delta_w1, delta_w2
+
+        return self
+
+
+
+from keras.datasets import mnist
+import matplotlib as plt
+
+# read the data
+(train_images, train_labels), (test_images, test_labels) = mnist.load_data()
+train_images = train_images.reshape(60000, 784).astype('float32')
+test_images = test_images.reshape(10000, 784).astype('float32')
+
+
+nn = NeuralNetwork(n_output = 10, n_features = train_images.shape[1], n_hidden=50, l1=0.1, l2=0.0, epochs=1000, eta=0.001, alpha=0.001, decrease_const=0.00001, shuffle=True, minibatches=50, random_state=1)
+
+nn.fit(train_images, train_labels, print_progress=True)
+
+plt.plt(range(len(nn.cost_)), nn.cost_)
+plt.ylim([0, 2000])
+plt.ylabel('Cost')
+plt.xlabel('Epochs * 50')
+plt.tight_layout()
+plt.show()
 
     
 
